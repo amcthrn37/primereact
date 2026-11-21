@@ -278,7 +278,9 @@ export const InputNumber = React.memo(
         const spin = (event, dir) => {
             if (inputRef.current) {
                 let step = props.step * dir;
-                let currentValue = parseValue(inputRef.current.value) || 0;
+                // a lone '-' (string) is not a number, treat it as 0
+                const parsedValue = parseValue(inputRef.current.value);
+                let currentValue = typeof parsedValue === 'number' ? parsedValue : 0;
                 let newValue = validateValue(addWithPrecision(currentValue, step));
 
                 if (props.maxLength && props.maxLength < formatValue(newValue).length) {
@@ -640,7 +642,10 @@ export const InputNumber = React.memo(
                 let filteredData = parseValue(data);
 
                 if (filteredData != null) {
-                    if (isFloat(filteredData)) {
+                    if (filteredData === '-') {
+                        // a pasted lone minus sign is handled like a typed one
+                        insert(event, '-', { isDecimalSign: false, isMinusSign: true });
+                    } else if (isFloat(filteredData)) {
                         const formattedValue = formatValue(filteredData);
 
                         inputRef.current.value = formattedValue;
@@ -664,6 +669,20 @@ export const InputNumber = React.memo(
             }
 
             return false;
+        };
+
+        /**
+         * Strict check: true only when the whole string is a single minus sign.
+         * (isMinusSign above matches ANY string that merely contains a minus, e.g. "-5".)
+         */
+        const isOnlyMinusSign = (str) => {
+            if (typeof str !== 'string') {
+                return false;
+            }
+
+            const trimmed = str.trim();
+
+            return trimmed.length === 1 && isMinusSign(trimmed);
         };
 
         const replaceDecimalSeparator = (val) => {
@@ -699,7 +718,8 @@ export const InputNumber = React.memo(
 
             let parseVal = parseValue(formattedVal);
 
-            if (parseVal === null) {
+            // parseValue returns the string '-' for a lone minus sign, which is not a float
+            if (parseVal === null || parseVal === '-') {
                 return false;
             }
 
@@ -769,6 +789,11 @@ export const InputNumber = React.memo(
                     }
 
                     updateValue(event, newValueStr, text, 'insert');
+                } else if (isNewMinusSign && parseValue(inputValue) === 0) {
+                    // #8548 - the field shows a plain zero ("0", "0.00") with the cursor after it
+                    // (always the case for an "empty" field when allowEmpty is false, and for a value of 0).
+                    // Typing '-' replaces the zero with a lone minus sign, ready for the next digit.
+                    updateValue(event, text, text, 'insert');
                 }
             } else if (sign.isDecimalSign) {
                 if (decimalCharIndex > 0 && selectionStart === decimalCharIndex) {
@@ -935,6 +960,25 @@ export const InputNumber = React.memo(
             let newValue = null;
 
             if (valueStr != null) {
+                // #8548 - a lone minus sign is kept as-is in the input (it is not a number yet),
+                // so it must not go through parseValue/evaluateEmpty, which would turn it into 0 or ''.
+                if (isOnlyMinusSign(valueStr)) {
+                    const inputEl = inputRef.current;
+                    const minus = valueStr.trim();
+
+                    if (props.maxLength && props.maxLength < minus.length) {
+                        return;
+                    }
+
+                    inputEl.value = minus;
+                    inputEl.setSelectionRange(minus.length, minus.length);
+                    inputEl.removeAttribute('aria-valuenow');
+
+                    handleOnChange(event, currentValue, null);
+
+                    return;
+                }
+
                 newValue = evaluateEmpty(parseValue(valueStr));
                 updateInput(newValue, insertedValueStr, operation, valueStr);
 
